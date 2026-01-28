@@ -86,20 +86,20 @@ function markdownToTelegramHtml(text) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;');
 
-  // Extract code blocks first to protect them
+  // Extract code blocks first to protect them (use unique placeholders)
   const codeBlocks = [];
   result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
     const index = codeBlocks.length;
     codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
-    return `__CODE_BLOCK_${index}__`;
+    return `<<<CODEBLOCK${index}>>>`;
   });
 
-  // Extract inline code
+  // Extract inline code (use unique placeholders)
   const inlineCodes = [];
   result = result.replace(/`([^`]+)`/g, (match, code) => {
     const index = inlineCodes.length;
     inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
-    return `__INLINE_CODE_${index}__`;
+    return `<<<INLINECODE${index}>>>`;
   });
 
   // Now escape HTML in the remaining text
@@ -108,16 +108,16 @@ function markdownToTelegramHtml(text) {
   // Convert markdown formatting
   result = result.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');  // Bold
   result = result.replace(/\*(.+?)\*/g, '<i>$1</i>');      // Italic
-  result = result.replace(/__(.+?)__/g, '<u>$1</u>');      // Underline (avoid conflict with placeholders)
+  result = result.replace(/__(.+?)__/g, '<u>$1</u>');      // Underline
   result = result.replace(/~~(.+?)~~/g, '<s>$1</s>');      // Strikethrough
 
   // Restore code blocks and inline code
   codeBlocks.forEach((block, index) => {
-    result = result.replace(`__CODE_BLOCK_${index}__`, block);
+    result = result.replace(`&lt;&lt;&lt;CODEBLOCK${index}&gt;&gt;&gt;`, block);
   });
 
   inlineCodes.forEach((code, index) => {
-    result = result.replace(`__INLINE_CODE_${index}__`, code);
+    result = result.replace(`&lt;&lt;&lt;INLINECODE${index}&gt;&gt;&gt;`, code);
   });
 
   return result;
