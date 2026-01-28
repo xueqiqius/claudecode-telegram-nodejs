@@ -1,10 +1,10 @@
 #!/usr/bin/env node
 
 /**
- * Claude Code Stop Hook - Sends Claude's response to Telegram
+ * Claude Code Stop Hook - Sends Claude's response to Bridge
  *
  * This script is called by Claude Code when it finishes responding.
- * It reads the transcript, extracts the last assistant message, and sends it to Telegram.
+ * It reads the transcript, extracts the last assistant message, and sends it to the bridge.
  */
 
 import fs from 'node:fs';
@@ -31,102 +31,12 @@ if (fs.existsSync(envPath)) {
 }
 
 // Configuration
-const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
-const CLAUDE_DIR = path.join(os.homedir(), '.claude');
-const CHAT_ID_FILE = path.join(CLAUDE_DIR, 'telegram_chat_id');
-const PENDING_FILE = path.join(CLAUDE_DIR, 'telegram_pending');
-
-// Telegram message limit
-const MAX_MESSAGE_LENGTH = 4000;
-
-// Timeout for pending requests (10 minutes)
-const PENDING_TIMEOUT_MS = 10 * 60 * 1000;
-
-/**
- * Send a message via Telegram Bot API
- */
-async function sendTelegramMessage(chatId, text, parseMode = 'HTML') {
-  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
-
-  try {
-    const response = await fetch(url, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        chat_id: chatId,
-        text: text.slice(0, MAX_MESSAGE_LENGTH),
-        parse_mode: parseMode
-      })
-    });
-
-    const data = await response.json();
-
-    // If HTML parsing fails, retry with plain text
-    if (!data.ok && parseMode === 'HTML') {
-      console.error('HTML parse failed, retrying as plain text');
-      return sendTelegramMessage(chatId, text, null);
-    }
-
-    return data;
-  } catch (error) {
-    console.error('Failed to send Telegram message:', error.message);
-    return { ok: false, error: error.message };
-  }
-}
-
-/**
- * Convert Markdown to Telegram HTML
- */
-function markdownToTelegramHtml(text) {
-  let result = text;
-
-  // Escape HTML special characters first (except in code blocks)
-  const escapeHtml = (str) => str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;');
-
-  // Extract code blocks first to protect them (use unique placeholders)
-  const codeBlocks = [];
-  result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
-    const index = codeBlocks.length;
-    codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
-    return `<<<CODEBLOCK${index}>>>`;
-  });
-
-  // Extract inline code (use unique placeholders)
-  const inlineCodes = [];
-  result = result.replace(/`([^`]+)`/g, (match, code) => {
-    const index = inlineCodes.length;
-    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
-    return `<<<INLINECODE${index}>>>`;
-  });
-
-  // Now escape HTML in the remaining text
-  result = escapeHtml(result);
-
-  // Convert markdown formatting
-  result = result.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');  // Bold
-  result = result.replace(/\*(.+?)\*/g, '<i>$1</i>');      // Italic
-  result = result.replace(/__(.+?)__/g, '<u>$1</u>');      // Underline
-  result = result.replace(/~~(.+?)~~/g, '<s>$1</s>');      // Strikethrough
-
-  // Restore code blocks and inline code
-  codeBlocks.forEach((block, index) => {
-    result = result.replace(`&lt;&lt;&lt;CODEBLOCK${index}&gt;&gt;&gt;`, block);
-  });
-
-  inlineCodes.forEach((code, index) => {
-    result = result.replace(`&lt;&lt;&lt;INLINECODE${index}&gt;&gt;&gt;`, code);
-  });
-
-  return result;
-}
+const BRIDGE_URL = process.env.BRIDGE_URL || 'http://localhost:3007/hook';
 
 /**
  * Extract the last assistant message from transcript
  */
-async function extractLastAssistantMessage(transcriptPath) {
+function extractLastAssistantMessage(transcriptPath) {
   if (!fs.existsSync(transcriptPath)) {
     console.error('Transcript file not found:', transcriptPath);
     return null;
@@ -169,45 +79,22 @@ async function extractLastAssistantMessage(transcriptPath) {
 }
 
 /**
- * Check if there's a pending Telegram request
+ * Send message to bridge
  */
-function isPending() {
-  if (!fs.existsSync(PENDING_FILE)) {
-    return false;
-  }
-
+async function sendToBridge(message, cwd, sessionId) {
   try {
-    const timestamp = parseInt(fs.readFileSync(PENDING_FILE, 'utf-8'), 10);
-    const age = Date.now() - timestamp;
+    const response = await fetch(BRIDGE_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message, cwd, sessionId })
+    });
 
-    // Check if pending request is within timeout
-    return age < PENDING_TIMEOUT_MS;
-  } catch (e) {
-    return false;
-  }
-}
-
-/**
- * Clear pending state
- */
-function clearPending() {
-  if (fs.existsSync(PENDING_FILE)) {
-    fs.unlinkSync(PENDING_FILE);
-  }
-}
-
-/**
- * Get saved chat ID
- */
-function getChatId() {
-  if (!fs.existsSync(CHAT_ID_FILE)) {
-    return null;
-  }
-
-  try {
-    return fs.readFileSync(CHAT_ID_FILE, 'utf-8').trim();
-  } catch (e) {
-    return null;
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    // Bridge might not be running - this is OK
+    console.log('Bridge not available:', error.message);
+    return { ok: false, error: error.message };
   }
 }
 
@@ -240,25 +127,6 @@ async function main() {
     process.exit(0);
   }
 
-  // Check if there's a pending Telegram request
-  if (!isPending()) {
-    console.log('No pending Telegram request, skipping');
-    process.exit(0);
-  }
-
-  // Get chat ID
-  const chatId = getChatId();
-  if (!chatId) {
-    console.error('No chat ID found');
-    process.exit(1);
-  }
-
-  // Check for bot token
-  if (!BOT_TOKEN) {
-    console.error('TELEGRAM_BOT_TOKEN not set');
-    process.exit(1);
-  }
-
   // Extract transcript path from hook input
   const transcriptPath = hookInput.transcript_path;
   if (!transcriptPath) {
@@ -269,27 +137,28 @@ async function main() {
   // Expand ~ in path if needed
   const expandedPath = transcriptPath.replace(/^~/, os.homedir());
 
+  // Extract source info from hook input
+  const cwd = hookInput.cwd || '未知目录';
+  const sessionId = path.basename(transcriptPath, '.jsonl');
+
   // Extract the last assistant message
-  const message = await extractLastAssistantMessage(expandedPath);
+  const message = extractLastAssistantMessage(expandedPath);
 
   if (!message) {
     console.log('No assistant message found in transcript');
-    clearPending();
     process.exit(0);
   }
 
-  // Convert to Telegram HTML and send
-  const htmlMessage = markdownToTelegramHtml(message);
-  const result = await sendTelegramMessage(chatId, htmlMessage);
+  // Send to bridge
+  const result = await sendToBridge(message, cwd, sessionId);
 
   if (result.ok) {
-    console.log('Message sent to Telegram successfully');
+    console.log('Message sent to bridge successfully');
+  } else if (result.muted) {
+    console.log('Bridge is muted, message not sent');
   } else {
-    console.error('Failed to send message:', result);
+    console.log('Bridge response:', result);
   }
-
-  // Clear pending state
-  clearPending();
 }
 
 main().catch(error => {

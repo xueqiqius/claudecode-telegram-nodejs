@@ -31,8 +31,13 @@ const WEZTERM_PANE_ID = process.env.WEZTERM_PANE_ID; // Optional: specific pane 
 // Paths for state files
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const CHAT_ID_FILE = path.join(CLAUDE_DIR, 'telegram_chat_id');
-const PENDING_FILE = path.join(CLAUDE_DIR, 'telegram_pending');
 const PANE_ID_FILE = path.join(CLAUDE_DIR, 'telegram_pane_id');
+
+// Telegram message limit
+const MAX_MESSAGE_LENGTH = 4000;
+
+// In-memory state
+let isMuted = false;
 
 // Ensure .claude directory exists
 if (!fs.existsSync(CLAUDE_DIR)) {
@@ -83,15 +88,86 @@ async function telegramApi(method, body = {}) {
 }
 
 /**
+ * Convert Markdown to Telegram HTML
+ */
+function markdownToTelegramHtml(text) {
+  let result = text;
+
+  // Escape HTML special characters first (except in code blocks)
+  const escapeHtml = (str) => str
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+
+  // Extract code blocks first to protect them (use unique placeholders)
+  const codeBlocks = [];
+  result = result.replace(/```(\w*)\n?([\s\S]*?)```/g, (match, lang, code) => {
+    const index = codeBlocks.length;
+    codeBlocks.push(`<pre><code>${escapeHtml(code.trim())}</code></pre>`);
+    return `<<<CODEBLOCK${index}>>>`;
+  });
+
+  // Extract inline code (use unique placeholders)
+  const inlineCodes = [];
+  result = result.replace(/`([^`]+)`/g, (match, code) => {
+    const index = inlineCodes.length;
+    inlineCodes.push(`<code>${escapeHtml(code)}</code>`);
+    return `<<<INLINECODE${index}>>>`;
+  });
+
+  // Now escape HTML in the remaining text
+  result = escapeHtml(result);
+
+  // Convert markdown formatting
+  result = result.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');  // Bold
+  result = result.replace(/\*(.+?)\*/g, '<i>$1</i>');      // Italic
+  result = result.replace(/__(.+?)__/g, '<u>$1</u>');      // Underline
+  result = result.replace(/~~(.+?)~~/g, '<s>$1</s>');      // Strikethrough
+
+  // Restore code blocks and inline code
+  codeBlocks.forEach((block, index) => {
+    result = result.replace(`&lt;&lt;&lt;CODEBLOCK${index}&gt;&gt;&gt;`, block);
+  });
+
+  inlineCodes.forEach((code, index) => {
+    result = result.replace(`&lt;&lt;&lt;INLINECODE${index}&gt;&gt;&gt;`, code);
+  });
+
+  return result;
+}
+
+/**
  * Send a message to Telegram
  */
 async function sendMessage(chatId, text, options = {}) {
   return telegramApi('sendMessage', {
     chat_id: chatId,
-    text: text.slice(0, 4000), // Telegram's limit
+    text: text.slice(0, MAX_MESSAGE_LENGTH),
     parse_mode: options.parseMode || 'HTML',
     ...options
   });
+}
+
+/**
+ * Send a message with HTML, fallback to plain text if parsing fails
+ */
+async function sendMessageWithFallback(chatId, text, parseMode = 'HTML') {
+  const result = await telegramApi('sendMessage', {
+    chat_id: chatId,
+    text: text.slice(0, MAX_MESSAGE_LENGTH),
+    parse_mode: parseMode
+  });
+
+  // If HTML parsing fails, retry with plain text
+  if (!result.ok && parseMode === 'HTML') {
+    console.error('HTML parse failed, retrying as plain text');
+    return telegramApi('sendMessage', {
+      chat_id: chatId,
+      text: text.slice(0, MAX_MESSAGE_LENGTH)
+    });
+  }
+
+  return result;
 }
 
 /**
@@ -247,18 +323,16 @@ function saveChatId(chatId) {
 }
 
 /**
- * Mark a request as pending (for the stop hook)
+ * Get the current chat ID
  */
-function setPending() {
-  fs.writeFileSync(PENDING_FILE, Date.now().toString(), 'utf-8');
-}
-
-/**
- * Clear pending state
- */
-function clearPending() {
-  if (fs.existsSync(PENDING_FILE)) {
-    fs.unlinkSync(PENDING_FILE);
+function getChatId() {
+  if (!fs.existsSync(CHAT_ID_FILE)) {
+    return null;
+  }
+  try {
+    return fs.readFileSync(CHAT_ID_FILE, 'utf-8').trim();
+  } catch (e) {
+    return null;
   }
 }
 
@@ -273,6 +347,8 @@ async function setupBotCommands() {
     { command: 'stop', description: '中断 Claude（发送 Escape）' },
     { command: 'clear', description: '清除对话上下文' },
     { command: 'resume', description: '恢复之前的会话' },
+    { command: 'mute', description: '静音 - 不接收 Claude 回复' },
+    { command: 'unmute', description: '取消静音 - 接收 Claude 回复' },
     { command: 'refresh', description: '刷新机器人命令' },
     { command: 'help', description: '显示帮助信息' }
   ];
@@ -306,6 +382,10 @@ async function handleCommand(chatId, command, args) {
 /stop - 中断 Claude（Escape）
 /clear - 清除对话
 /resume - 恢复之前的会话
+
+<b>通知控制:</b>
+/mute - 静音（不接收 Claude 回复）
+/unmute - 取消静音
 
 <b>使用方法:</b>
 直接发送消息即可与 Claude Code 对话！
@@ -365,16 +445,27 @@ async function handleCommand(chatId, command, args) {
     case '/status': {
       const panes = getWeztermPanes();
       const currentPaneId = findClaudePaneId();
+      const muteStatus = isMuted ? '🔇 已静音' : '🔔 通知开启';
 
       if (currentPaneId !== null) {
         const pane = panes.find(p => String(p.pane_id) === String(currentPaneId));
         const title = pane?.title || '(无标题)';
-        await sendMessage(chatId, `✅ 已就绪\n\n窗格 ID: <b>${currentPaneId}</b>\n标题: ${title}`);
+        await sendMessage(chatId, `✅ 已就绪\n\n窗格 ID: <b>${currentPaneId}</b>\n标题: ${title}\n状态: ${muteStatus}`);
       } else {
-        await sendMessage(chatId, '❌ 未选择窗格\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 选择窗格');
+        await sendMessage(chatId, `❌ 未选择窗格\n状态: ${muteStatus}\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 选择窗格`);
       }
       break;
     }
+
+    case '/mute':
+      isMuted = true;
+      await sendMessage(chatId, '🔇 已静音\n\nClaude 的回复将不会发送到 Telegram。\n使用 /unmute 取消静音。');
+      break;
+
+    case '/unmute':
+      isMuted = false;
+      await sendMessage(chatId, '🔔 已取消静音\n\nClaude 的回复将会发送到 Telegram。');
+      break;
 
     case '/refresh':
       await setupBotCommands();
@@ -388,7 +479,6 @@ async function handleCommand(chatId, command, args) {
         await sendMessage(chatId, '❌ 发送中断失败');
       }
       stopTypingLoop();
-      clearPending();
       break;
 
     case '/clear':
@@ -439,9 +529,6 @@ async function handleMessage(chatId, text) {
   }
 
   try {
-    // Mark as pending for the stop hook
-    setPending();
-
     // Start typing indicator
     startTypingLoop(chatId);
 
@@ -451,21 +538,82 @@ async function handleMessage(chatId, text) {
     console.log(`Message sent to Claude (pane ${paneId}): ${text.slice(0, 50)}...`);
   } catch (error) {
     stopTypingLoop();
-    clearPending();
     await sendMessage(chatId, `❌ 错误: ${error.message}`);
   }
 }
 
 /**
- * Handle incoming webhook requests
+ * Handle hook POST requests (from Claude Code stop hook)
  */
-async function handleWebhook(req, res) {
-  if (req.method !== 'POST') {
-    res.writeHead(405);
-    res.end('Method Not Allowed');
-    return;
-  }
+async function handleHookRequest(req, res) {
+  let body = '';
 
+  req.on('data', chunk => {
+    body += chunk.toString();
+  });
+
+  req.on('end', async () => {
+    try {
+      const data = JSON.parse(body);
+      const { message, cwd, sessionId } = data;
+
+      // Stop typing indicator
+      stopTypingLoop();
+
+      // Check if muted
+      if (isMuted) {
+        console.log('Muted - not sending message to Telegram');
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, muted: true }));
+        return;
+      }
+
+      // Get chat ID
+      const chatId = getChatId();
+      if (!chatId) {
+        console.error('No chat ID found');
+        res.writeHead(400);
+        res.end(JSON.stringify({ ok: false, error: 'No chat ID' }));
+        return;
+      }
+
+      if (!message) {
+        console.log('No message to send');
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true, empty: true }));
+        return;
+      }
+
+      // Build message with source info header
+      const cwdDisplay = cwd || '未知目录';
+      const sessionDisplay = sessionId || '未知会话';
+      const htmlHeader = `<code>📁 ${cwdDisplay}</code>\n<code>🔖 ${sessionDisplay}</code>\n\n`;
+
+      // Convert to Telegram HTML and send
+      const htmlMessage = htmlHeader + markdownToTelegramHtml(message);
+      const result = await sendMessageWithFallback(chatId, htmlMessage);
+
+      if (result.ok) {
+        console.log('Message sent to Telegram successfully');
+        res.writeHead(200);
+        res.end(JSON.stringify({ ok: true }));
+      } else {
+        console.error('Failed to send message:', result);
+        res.writeHead(500);
+        res.end(JSON.stringify({ ok: false, error: result.description }));
+      }
+    } catch (error) {
+      console.error('Hook request error:', error);
+      res.writeHead(500);
+      res.end(JSON.stringify({ ok: false, error: error.message }));
+    }
+  });
+}
+
+/**
+ * Handle incoming webhook requests (Telegram)
+ */
+async function handleTelegramWebhook(req, res) {
   let body = '';
 
   req.on('data', chunk => {
@@ -518,6 +666,33 @@ async function handleWebhook(req, res) {
 }
 
 /**
+ * Main HTTP request handler
+ */
+async function handleRequest(req, res) {
+  const url = new URL(req.url, `http://localhost:${PORT}`);
+
+  // Handle hook endpoint
+  if (url.pathname === '/hook' && req.method === 'POST') {
+    return handleHookRequest(req, res);
+  }
+
+  // Handle Telegram webhook (default POST)
+  if (req.method === 'POST') {
+    return handleTelegramWebhook(req, res);
+  }
+
+  // Health check endpoint
+  if (url.pathname === '/health' && req.method === 'GET') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, muted: isMuted }));
+    return;
+  }
+
+  res.writeHead(404);
+  res.end('Not Found');
+}
+
+/**
  * Main entry point
  */
 async function main() {
@@ -530,13 +705,14 @@ async function main() {
   await setupBotCommands();
 
   // Create HTTP server
-  const server = http.createServer(handleWebhook);
+  const server = http.createServer(handleRequest);
 
   server.listen(PORT, () => {
     console.log(`Claude Code Telegram Bridge`);
     console.log(`============================`);
     console.log(`Server running on port ${PORT}`);
     console.log(`Bot token: ${BOT_TOKEN.slice(0, 10)}...`);
+    console.log(`Hook endpoint: http://localhost:${PORT}/hook`);
     console.log(`\nNext steps:`);
     console.log(`1. Start Claude Code in WezTerm: claude`);
     console.log(`2. Expose this port to the internet`);
@@ -544,8 +720,5 @@ async function main() {
     console.log(`   curl "https://api.telegram.org/bot${BOT_TOKEN}/setWebhook?url=YOUR_PUBLIC_URL"`);
   });
 }
-
-// Export for stop hook to use
-export { sendMessage, stopTypingLoop, clearPending };
 
 main().catch(console.error);
