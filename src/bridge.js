@@ -28,6 +28,11 @@ const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PORT = parseInt(process.env.PORT || '3007', 10);
 const WEZTERM_PANE_ID = process.env.WEZTERM_PANE_ID; // Optional: specific pane ID
 
+// Allowed chat IDs (comma-separated list, empty = allow all - NOT RECOMMENDED)
+const ALLOWED_CHAT_IDS = process.env.ALLOWED_CHAT_IDS
+  ? process.env.ALLOWED_CHAT_IDS.split(',').map(id => id.trim()).filter(Boolean)
+  : [];
+
 // Paths for state files
 const CLAUDE_DIR = path.join(os.homedir(), '.claude');
 const CHAT_ID_FILE = path.join(CLAUDE_DIR, 'telegram_chat_id');
@@ -337,6 +342,17 @@ function getChatId() {
 }
 
 /**
+ * Check if a chat ID is authorized
+ */
+function isAuthorized(chatId) {
+  // If no whitelist configured, reject all (security by default)
+  if (ALLOWED_CHAT_IDS.length === 0) {
+    return false;
+  }
+  return ALLOWED_CHAT_IDS.includes(String(chatId));
+}
+
+/**
  * Setup bot commands in Telegram
  */
 async function setupBotCommands() {
@@ -629,6 +645,15 @@ async function handleTelegramWebhook(req, res) {
         const chatId = update.message.chat.id;
         const text = update.message.text || '';
 
+        // Check authorization
+        if (!isAuthorized(chatId)) {
+          console.log(`Unauthorized access attempt from chat ID: ${chatId}`);
+          await sendMessage(chatId, `⛔ 未授权\n\n您的 Chat ID: <code>${chatId}</code>\n\n请联系管理员将您的 Chat ID 添加到白名单。`);
+          res.writeHead(200);
+          res.end('OK');
+          return;
+        }
+
         if (text.startsWith('/')) {
           const [command, ...args] = text.split(' ');
           await handleCommand(chatId, command.toLowerCase(), args.join(' '));
@@ -641,6 +666,18 @@ async function handleTelegramWebhook(req, res) {
       if (update.callback_query) {
         const chatId = update.callback_query.message.chat.id;
         const data = update.callback_query.data;
+
+        // Check authorization for callbacks too
+        if (!isAuthorized(chatId)) {
+          await telegramApi('answerCallbackQuery', {
+            callback_query_id: update.callback_query.id,
+            text: '未授权',
+            show_alert: true
+          });
+          res.writeHead(200);
+          res.end('OK');
+          return;
+        }
 
         // Acknowledge the callback
         await telegramApi('answerCallbackQuery', {
@@ -701,6 +738,19 @@ async function main() {
     process.exit(1);
   }
 
+  // Check for ALLOWED_CHAT_IDS
+  if (ALLOWED_CHAT_IDS.length === 0) {
+    console.error('');
+    console.error('⚠️  WARNING: ALLOWED_CHAT_IDS is not configured!');
+    console.error('   All users will be REJECTED for security.');
+    console.error('   Add your chat ID to .env file:');
+    console.error('   ALLOWED_CHAT_IDS=your_chat_id');
+    console.error('');
+    console.error('   To find your chat ID, send any message to the bot');
+    console.error('   and check the console output.');
+    console.error('');
+  }
+
   // Setup bot commands
   await setupBotCommands();
 
@@ -713,6 +763,11 @@ async function main() {
     console.log(`Server running on port ${PORT}`);
     console.log(`Bot token: ${BOT_TOKEN.slice(0, 10)}...`);
     console.log(`Hook endpoint: http://localhost:${PORT}/hook`);
+    if (ALLOWED_CHAT_IDS.length > 0) {
+      console.log(`Allowed chat IDs: ${ALLOWED_CHAT_IDS.join(', ')}`);
+    } else {
+      console.log(`Allowed chat IDs: NONE (all rejected)`);
+    }
     console.log(`\nNext steps:`);
     console.log(`1. Start Claude Code in WezTerm: claude`);
     console.log(`2. Expose this port to the internet`);

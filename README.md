@@ -37,6 +37,26 @@
 | `/mute` | 静音（不接收 Claude 回复） |
 | `/unmute` | 取消静音 |
 
+## 安全设置
+
+⚠️ **必须配置 `ALLOWED_CHAT_IDS`**，否则所有用户都无法使用 Bot。
+
+```env
+# .env 文件
+ALLOWED_CHAT_IDS=123456789
+```
+
+**获取 Chat ID 的方法：**
+1. 启动桥接器：`npm start`
+2. 在 Telegram 中向 Bot 发送任意消息
+3. 查看控制台输出，会显示 `Unauthorized access attempt from chat ID: XXXXXX`
+4. 将该 ID 添加到 `.env` 文件中
+
+**多用户设置：** 用逗号分隔多个 ID
+```env
+ALLOWED_CHAT_IDS=123456789,987654321
+```
+
 ## 注意事项
 
 1. **必须使用 `--dangerously-skip-permissions` 启动 Claude Code**

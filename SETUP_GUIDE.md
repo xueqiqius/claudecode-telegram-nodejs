@@ -14,8 +14,31 @@
 
 
 ## 3. 克隆这个仓库，比如 D:/claudecode-telegram-nodejs，之后进入项目目录
-	将.env.example文件改名为 .env ，修改文件，TELEGRAM_BOT_TOKEN 替换为之前步骤保存的 Token，配置桥接程序运行的端口号
+	将.env.example文件改名为 .env ，修改文件：
+	- `TELEGRAM_BOT_TOKEN` 替换为之前步骤保存的 Token
+	- `PORT` 配置桥接程序运行的端口号（默认 3007）
+	- `ALLOWED_CHAT_IDS` 先留空，后面会配置
 
+## 3.5 获取并配置 Chat ID（安全设置）
+
+⚠️ **重要：必须配置 ALLOWED_CHAT_IDS，否则 Bot 将拒绝所有用户！**
+
+1. 先启动桥接程序：`npm start`
+2. 在 Telegram 中向你的 Bot 发送任意消息
+3. 查看控制台输出，会显示：
+   ```
+   Unauthorized access attempt from chat ID: 123456789
+   ```
+4. 复制这个数字，添加到 `.env` 文件：
+   ```
+   ALLOWED_CHAT_IDS=123456789
+   ```
+5. 重启桥接程序
+
+**多用户设置：** 用逗号分隔多个 ID
+```
+ALLOWED_CHAT_IDS=123456789,987654321
+```
 
 ## 4. 配置 Claude Code Hook，找到 Claude 配置文件 %USERPROFILE%\.claude\settings.json ，用文本编辑器打开 `settings.json`。
 
