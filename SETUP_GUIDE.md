@@ -1,7 +1,4 @@
 
-
-本桥接程序通过windows系统里wezterm软件，达到使用telegram bot与claude code进行交互的功能。
-
 ## 1. 环境要求
 
 | 软件 | 检查方法 | 安装方式 |
@@ -11,7 +8,9 @@
 | **Claude Code CLI** | 运行 `claude --version` | 运行 `npm install -g @anthropic-ai/claude-code` |
 | **Telegram 账号** | - | 下载 Telegram 应用 |
 
-## 2. 创建 Telegram 机器人，打开Telegram ，在搜索栏输入 `@BotFather` ，发送 `/start` 之后按提示创建bot，创建成功后，BotFather 会发送类似这样的消息：Use this token to access the HTTP API:7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx，复制这个 Token（类似 `7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` 的部分）并妥善保存。后面会用到。
+## 2. 创建 Telegram 机器人，打开Telegram ，在搜索栏输入 `@BotFather` ，发送 `/start` 之后按提示创建bot。
+	创建成功后，BotFather 会发送类似这样的消息：Use this token to access the HTTP API:7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+	复制这个 Token（类似 `7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx` 的部分）并妥善保存。后面会用到。
 
 
 ## 3. 克隆这个仓库，比如 D:/claudecode-telegram-nodejs，之后进入项目目录
@@ -67,7 +66,9 @@
 
 
 ## 5. 将bot 回调服务暴露到公网
-1、有公网就直接暴露端口，需要配置证书，因为telegram回调需要使用https
+
+1、有公网就直接暴露端口，需要配置证书，因为telegram回调需要使用https。
+
 2、没有公网就 Cloudflare Tunnel
 
 	a. **安装 cloudflared**：
@@ -84,7 +85,8 @@
 
 ---
 
-## 6. 注册 Telegram Webhook ,需要告诉 Telegram 将消息发送到哪里。组合url后直接浏览器访问即可 https://api.telegram.org/bot7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/setWebhook?url=https://abc123.ngrok-free.app
+## 6. 注册 Telegram Webhook ,需要告诉 Telegram 将消息发送到哪里。
+组合url后直接浏览器访问即可 https://api.telegram.org/bot7123456789:AAHxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx/setWebhook?url=https://abc123.ngrok-free.app
 你应该看到：{"ok":true,"result":true,"description":"Webhook was set"}
 
 ## 7. 启动桥接程序
@@ -106,8 +108,9 @@ npm start
 	5 ✅ - 管理员: ✳️ Model Identification
 	17 - powershell.exe
 	
-再使用 /setpane 3 ,激活你要使用的窗口，会收到提示”已选择窗格 5“
-之后直接发具体内容即可，bot会把内容发给桥接程序，桥接程序会把内容发给wezterm窗口。当claude code完成时，消息会被hooks捕获，然后通过D:/claudecode-telegram-nodejs/hooks/send-to-telegram.cmd发送给bot。
+再使用 /setpane 3 ,激活你要使用的窗口，会收到提示”已选择窗格 5“。
+之后直接发具体内容即可，bot会把内容发给桥接程序，桥接程序会把内容发给wezterm窗口。
+当claude code完成时，消息会被hooks捕获，然后通过D:/claudecode-telegram-nodejs/hooks/send-to-telegram.cmd发送给bot。
 
 
 enjoy it！
