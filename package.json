@@ -1,0 +1,20 @@
+{
+  "name": "claudecode-telegram-nodejs",
+  "version": "1.0.0",
+  "description": "Bridge between Telegram and Claude Code using WezTerm",
+  "main": "src/bridge.js",
+  "type": "module",
+  "scripts": {
+    "start": "node src/bridge.js"
+  },
+  "keywords": [
+    "telegram",
+    "claude",
+    "claude-code",
+    "wezterm"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
