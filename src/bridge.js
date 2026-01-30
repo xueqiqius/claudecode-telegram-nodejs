@@ -374,7 +374,6 @@ async function setupBotCommands() {
   const commands = [
     { command: 'panes', description: '列出所有 WezTerm 窗格' },
     { command: 'setpane', description: '设置活动窗格 (例如: /setpane 3)' },
-    { command: 'clearpane', description: '清除窗格选择（WezTerm 重启后使用）' },
     { command: 'status', description: '检查当前状态' },
     { command: 'stop', description: '中断 Claude（发送 Escape）' },
     { command: 'clear', description: '清除对话上下文' },
@@ -408,7 +407,6 @@ async function handleCommand(chatId, command, args) {
 <b>窗格管理:</b>
 /panes - 列出所有 WezTerm 窗格
 /setpane &lt;id&gt; - 设置活动窗格
-/clearpane - 清除窗格选择
 
 <b>会话控制:</b>
 /status - 检查会话状态
@@ -424,7 +422,6 @@ async function handleCommand(chatId, command, args) {
 直接发送消息即可与 Claude Code 对话！
 
 <b>注意:</b> 请先用 /panes 查看并用 /setpane 选择正确的窗格。
-<b>提示:</b> WezTerm 重启后，需要用 /panes 和 /setpane 重新选择窗格。
       `.trim());
       break;
 
@@ -475,11 +472,6 @@ async function handleCommand(chatId, command, args) {
       await sendMessage(chatId, `✅ 已选择窗格 <b>${paneId}</b>\n标题: ${title}\n\n现在可以发送消息了！`);
       break;
     }
-
-    case '/clearpane':
-      clearSelectedPaneId();
-      await sendMessage(chatId, '🗑 已清除窗格选择\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 重新选择');
-      break;
 
     case '/status': {
       const panes = getWeztermPanes();
