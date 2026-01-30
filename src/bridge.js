@@ -268,13 +268,28 @@ function sessionExists() {
 }
 
 /**
- * Send text to WezTerm pane
+ * Send text to WezTerm pane (with fresh validation)
  */
 function weztermSendText(text) {
+  // Always get fresh pane data before sending
+  const panes = getWeztermPanes();
+
+  if (panes.length === 0) {
+    clearSelectedPaneId();
+    throw new Error('WezTerm 未运行或无法连接，请重新启动 WezTerm');
+  }
+
   const paneId = findClaudePaneId();
 
   if (!paneId) {
     throw new Error('未选择窗格，请先使用 /setpane 选择');
+  }
+
+  // Double-check pane exists in fresh data
+  const paneStillExists = panes.some(p => String(p.pane_id) === String(paneId));
+  if (!paneStillExists) {
+    clearSelectedPaneId();
+    throw new Error(`窗格 ${paneId} 已不存在（WezTerm 可能已重启），请使用 /panes 查看并重新选择`);
   }
 
   try {
@@ -359,6 +374,7 @@ async function setupBotCommands() {
   const commands = [
     { command: 'panes', description: '列出所有 WezTerm 窗格' },
     { command: 'setpane', description: '设置活动窗格 (例如: /setpane 3)' },
+    { command: 'clearpane', description: '清除窗格选择（WezTerm 重启后使用）' },
     { command: 'status', description: '检查当前状态' },
     { command: 'stop', description: '中断 Claude（发送 Escape）' },
     { command: 'clear', description: '清除对话上下文' },
@@ -392,6 +408,7 @@ async function handleCommand(chatId, command, args) {
 <b>窗格管理:</b>
 /panes - 列出所有 WezTerm 窗格
 /setpane &lt;id&gt; - 设置活动窗格
+/clearpane - 清除窗格选择
 
 <b>会话控制:</b>
 /status - 检查会话状态
@@ -407,6 +424,7 @@ async function handleCommand(chatId, command, args) {
 直接发送消息即可与 Claude Code 对话！
 
 <b>注意:</b> 请先用 /panes 查看并用 /setpane 选择正确的窗格。
+<b>提示:</b> WezTerm 重启后，需要用 /panes 和 /setpane 重新选择窗格。
       `.trim());
       break;
 
@@ -458,17 +476,23 @@ async function handleCommand(chatId, command, args) {
       break;
     }
 
+    case '/clearpane':
+      clearSelectedPaneId();
+      await sendMessage(chatId, '🗑 已清除窗格选择\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 重新选择');
+      break;
+
     case '/status': {
       const panes = getWeztermPanes();
       const currentPaneId = findClaudePaneId();
       const muteStatus = isMuted ? '🔇 已静音' : '🔔 通知开启';
+      const weztermStatus = panes.length > 0 ? `✅ WezTerm 已连接 (${panes.length} 个窗格)` : '❌ WezTerm 未连接';
 
       if (currentPaneId !== null) {
         const pane = panes.find(p => String(p.pane_id) === String(currentPaneId));
         const title = pane?.title || '(无标题)';
-        await sendMessage(chatId, `✅ 已就绪\n\n窗格 ID: <b>${currentPaneId}</b>\n标题: ${title}\n状态: ${muteStatus}`);
+        await sendMessage(chatId, `✅ 已就绪\n\n${weztermStatus}\n窗格 ID: <b>${currentPaneId}</b>\n标题: ${title}\n通知: ${muteStatus}`);
       } else {
-        await sendMessage(chatId, `❌ 未选择窗格\n状态: ${muteStatus}\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 选择窗格`);
+        await sendMessage(chatId, `❌ 未选择窗格\n\n${weztermStatus}\n通知: ${muteStatus}\n\n请使用 /panes 查看窗格列表\n然后使用 /setpane &lt;id&gt; 选择窗格`);
       }
       break;
     }
